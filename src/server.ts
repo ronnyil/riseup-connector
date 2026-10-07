@@ -1,10 +1,15 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import express from 'express';
+import { rateLimit } from 'express-rate-limit';
+import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
+import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { registerBudgetTool, fetchBudget } from '@riseup-oss/mcp/dist/tools/budget.js';
 import { registerTransactionsTool, fetchTransactions } from '@riseup-oss/mcp/dist/tools/transactions.js';
 import type { RiseupClientConfig } from '@riseup-oss/mcp/dist/client.js';
+import { Sealer, StatelessProvider, parseKey } from './oauth.js';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const API_BASE = 'https://input.riseup.co.il';
@@ -75,12 +80,7 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-createServer(async (req, res) => {
-  const url = new URL(req.url ?? '/', 'http://localhost'); // never log this
-  if (url.pathname === '/healthz') return send(res, 200, 'ok');
-  if (!url.pathname.startsWith('/mcp')) return send(res, 404, 'not found');
-  const pat = extractPat(url);
-  if (!pat || !patAllowed(pat)) return send(res, 404, 'not found');
+async function handleMcp(req: express.Request, res: express.Response, pat: string): Promise<void> {
   if (req.method !== 'POST') return send(res, 405, 'method not allowed');
   let body: unknown;
   try { body = await readJson(req); } catch { return send(res, 400, 'bad request'); }
@@ -94,8 +94,65 @@ createServer(async (req, res) => {
     console.error('request failed:', (e as Error).message);
     if (!res.headersSent) send(res, 500, 'internal error');
   }
-}).listen(PORT, () => {
+}
+
+// OAuth mode (token in Authorization header) is enabled when both are set.
+const PUBLIC_URL = process.env.PUBLIC_URL?.trim().replace(/\/+$/, '');
+const ENC_KEY = process.env.TOKEN_ENCRYPTION_KEY?.trim();
+if (!!PUBLIC_URL !== !!ENC_KEY) {
+  console.error('PUBLIC_URL and TOKEN_ENCRYPTION_KEY must be set together (or both left empty).');
+  process.exit(1);
+}
+
+const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', 1); // one reverse proxy (cloudflared / platform router) in front; used for rate limiting
+app.get('/healthz', (_req, res) => send(res, 200, 'ok'));
+
+let bearer: express.RequestHandler | undefined;
+if (PUBLIC_URL && ENC_KEY) {
+  const provider = new StatelessProvider(new Sealer(parseKey(ENC_KEY)), patAllowed);
+  const resourceUrl = new URL(`${PUBLIC_URL}/mcp`);
+  app.use(mcpAuthRouter({
+    provider,
+    issuerUrl: new URL(PUBLIC_URL),
+    resourceServerUrl: resourceUrl,
+    resourceName: 'RiseUp',
+    clientRegistrationOptions: { clientSecretExpirySeconds: 0 },
+  }));
+  app.post('/consent',
+    rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false }),
+    express.urlencoded({ extended: false, limit: '16kb' }),
+    (req, res) => provider.handleConsent(req, res, PAT_RE));
+  bearer = requireBearerAuth({ verifier: provider, resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceUrl) });
+}
+
+app.use(async (req, res, next) => {
+  const url = new URL(req.originalUrl, 'http://localhost'); // never log this
+  if (!url.pathname.startsWith('/mcp')) return next();
+  const inUrl = url.pathname.replace(/\/$/, '') !== '/mcp' || url.searchParams.has('pat');
+  if (inUrl || !bearer) {
+    // Legacy mode: PAT in the URL. Anything invalid looks like a missing route.
+    const pat = extractPat(url);
+    if (!pat || !patAllowed(pat)) return send(res, 404, 'not found');
+    return handleMcp(req, res, pat);
+  }
+  bearer(req, res, () => {
+    const pat = (req.auth?.extra as { pat?: string } | undefined)?.pat;
+    if (!pat) return send(res, 401, 'unauthorized');
+    void handleMcp(req, res, pat);
+  });
+});
+
+app.use((_req: express.Request, res: express.Response) => send(res, 404, 'not found'));
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('request failed:', (err as Error)?.message ?? 'unknown error');
+  if (!res.headersSent) send(res, (err as { status?: number })?.status === 400 ? 400 : 500, 'error');
+});
+
+app.listen(PORT, () => {
   console.log(`riseup-remote listening on :${PORT}` + (ALLOWED_HASHES.length
     ? ` (${ALLOWED_HASHES.length} allowed PAT hash(es))`
     : ' (WARNING: ALLOWED_PAT_SHA256 not set; any valid PAT accepted)'));
+  console.log(PUBLIC_URL ? `OAuth enabled for ${PUBLIC_URL}/mcp` : 'OAuth disabled (set PUBLIC_URL and TOKEN_ENCRYPTION_KEY to enable)');
 });

@@ -4,6 +4,8 @@ services:
     restart: unless-stopped
     environment:
       ALLOWED_PAT_SHA256: ${ALLOWED_PAT_SHA256}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
     # No published ports: only reachable through the Cloudflare Tunnel below.
 
   cloudflared:
