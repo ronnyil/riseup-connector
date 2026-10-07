@@ -1,0 +1,25 @@
+{
+  "name": "riseup-connector",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stateless Streamable HTTP wrapper around @riseup-oss/mcp for use as a claude.ai custom connector.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@riseup-oss/mcp": "0.3.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.41",
+    "typescript": "5.9.3"
+  }
+}

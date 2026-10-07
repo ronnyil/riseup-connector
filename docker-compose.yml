@@ -1,0 +1,16 @@
+services:
+  riseup:
+    build: .
+    restart: unless-stopped
+    environment:
+      ALLOWED_PAT_SHA256: ${ALLOWED_PAT_SHA256}
+    # No published ports: only reachable through the Cloudflare Tunnel below.
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    depends_on:
+      - riseup
