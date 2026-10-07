@@ -48,7 +48,32 @@ To **sign out a token**, remove its hash from `ALLOWED_PAT_SHA256`: every access
 refresh token carrying it stops working immediately. To **sign out everything**, change
 `TOKEN_ENCRYPTION_KEY`.
 
-## Setup
+## Option A: no computer (Render, free)
+
+Everything below can be done from a phone browser. [Render](https://render.com/docs/free)
+builds the Dockerfile straight from this GitHub repo and gives you an `https://` URL.
+
+1. Sign up at <https://render.com> with **Sign in with GitHub**, and allow Render access
+   to this repository.
+2. **New → Blueprint**, pick this repo, and **Apply**. When asked for
+   `CONNECT_PASSWORD`, choose a password (you'll type it once when connecting Claude).
+   `TOKEN_ENCRYPTION_KEY` is generated for you; `PUBLIC_URL` is detected automatically.
+3. Wait for the deploy to go **Live**, then copy the service URL
+   (e.g. `https://riseup-connector-xxxx.onrender.com`). Opening `<URL>/healthz` shows `ok`.
+4. Create a RiseUp PAT (scope `budget:read`) at
+   <https://input.riseup.co.il/developer/tokens>.
+5. claude.ai → **Settings → Connectors → Add custom connector**: URL `<URL>/mcp`,
+   OAuth fields empty → **Connect** → enter your password and PAT → **Connect**.
+
+Free-tier notes: the service sleeps after 15 minutes without traffic and takes about a
+minute to wake, so the first RiseUp question after a break may be slow or need a retry.
+Render's free hours (750/month) cover one service running all month. On Render use OAuth
+mode only (setting `CONNECT_PASSWORD` turns URL mode off), since platform request logs
+record URL paths.
+
+Every 30 days: create a new PAT, then in Claude **Disconnect → Connect** and paste it.
+
+## Option B: your own always-on machine (Docker + Cloudflare Tunnel)
 
 You need an always-on machine with Docker (home server, Raspberry Pi, VPS) and a free
 Cloudflare account with a domain.
@@ -80,6 +105,8 @@ ALLOWED_PAT_SHA256=<digest>
 ```
 
 If it is empty, any well-formed PAT is accepted and a warning is logged at startup.
+Alternatively (or additionally) set `CONNECT_PASSWORD`; the sign-in page then asks for it,
+and URL mode is turned off.
 
 ### 4. Create a Cloudflare Tunnel
 
@@ -102,7 +129,7 @@ PUBLIC_URL=https://rs-7k2q.example.com
 TOKEN_ENCRYPTION_KEY=<output of: openssl rand -hex 32>
 ```
 
-Set both or neither. With both empty only URL mode is available.
+Set both or neither. (Any random secret of 32+ characters works as the key.) With both empty only URL mode is available.
 
 ### 6. Start it
 

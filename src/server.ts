@@ -97,12 +97,16 @@ async function handleMcp(req: express.Request, res: express.Response, pat: strin
 }
 
 // OAuth mode (token in Authorization header) is enabled when both are set.
-const PUBLIC_URL = process.env.PUBLIC_URL?.trim().replace(/\/+$/, '');
+// On Render, PUBLIC_URL defaults to the service's own https URL.
+const EXPLICIT_URL = process.env.PUBLIC_URL?.trim();
+const PUBLIC_URL = (EXPLICIT_URL || process.env.RENDER_EXTERNAL_URL?.trim())?.replace(/\/+$/, '');
 const ENC_KEY = process.env.TOKEN_ENCRYPTION_KEY?.trim();
-if (!!PUBLIC_URL !== !!ENC_KEY) {
+const CONNECT_PASSWORD = process.env.CONNECT_PASSWORD?.trim() || undefined;
+if ((!!EXPLICIT_URL && !ENC_KEY) || (!!ENC_KEY && !PUBLIC_URL)) {
   console.error('PUBLIC_URL and TOKEN_ENCRYPTION_KEY must be set together (or both left empty).');
   process.exit(1);
 }
+const OAUTH_ENABLED = !!(PUBLIC_URL && ENC_KEY);
 
 const app = express();
 app.disable('x-powered-by');
@@ -110,8 +114,8 @@ app.set('trust proxy', 1); // one reverse proxy (cloudflared / platform router) 
 app.get('/healthz', (_req, res) => send(res, 200, 'ok'));
 
 let bearer: express.RequestHandler | undefined;
-if (PUBLIC_URL && ENC_KEY) {
-  const provider = new StatelessProvider(new Sealer(parseKey(ENC_KEY)), patAllowed);
+if (OAUTH_ENABLED && PUBLIC_URL && ENC_KEY) {
+  const provider = new StatelessProvider(new Sealer(parseKey(ENC_KEY)), patAllowed, CONNECT_PASSWORD);
   const resourceUrl = new URL(`${PUBLIC_URL}/mcp`);
   app.use(mcpAuthRouter({
     provider,
@@ -133,6 +137,8 @@ app.use(async (req, res, next) => {
   const inUrl = url.pathname.replace(/\/$/, '') !== '/mcp' || url.searchParams.has('pat');
   if (inUrl || !bearer) {
     // Legacy mode: PAT in the URL. Anything invalid looks like a missing route.
+    // It can't carry CONNECT_PASSWORD, so setting a password turns it off.
+    if (CONNECT_PASSWORD) return send(res, 404, 'not found');
     const pat = extractPat(url);
     if (!pat || !patAllowed(pat)) return send(res, 404, 'not found');
     return handleMcp(req, res, pat);
@@ -153,6 +159,9 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 app.listen(PORT, () => {
   console.log(`riseup-remote listening on :${PORT}` + (ALLOWED_HASHES.length
     ? ` (${ALLOWED_HASHES.length} allowed PAT hash(es))`
+    : CONNECT_PASSWORD && OAUTH_ENABLED ? ' (ALLOWED_PAT_SHA256 not set; sign-in protected by CONNECT_PASSWORD)'
     : ' (WARNING: ALLOWED_PAT_SHA256 not set; any valid PAT accepted)'));
-  console.log(PUBLIC_URL ? `OAuth enabled for ${PUBLIC_URL}/mcp` : 'OAuth disabled (set PUBLIC_URL and TOKEN_ENCRYPTION_KEY to enable)');
+  console.log(OAUTH_ENABLED
+    ? `OAuth enabled for ${PUBLIC_URL}/mcp` + (CONNECT_PASSWORD ? ' (password required)' : '')
+    : 'OAuth disabled (set PUBLIC_URL and TOKEN_ENCRYPTION_KEY to enable)');
 });
