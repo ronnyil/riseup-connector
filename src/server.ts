@@ -8,6 +8,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { registerBudgetTool, fetchBudget } from '@riseup-oss/mcp/dist/tools/budget.js';
 import { registerTransactionsTool, fetchTransactions } from '@riseup-oss/mcp/dist/tools/transactions.js';
+import { registerMortgagesTool, fetchMortgagesData } from '@riseup-oss/mcp/dist/tools/mortgages.js';
+import {
+  registerBalancesTools, fetchCurrentBankBalances, fetchHistoricalBankBalances,
+} from '@riseup-oss/mcp/dist/tools/balances.js';
+import { registerBenchmarksTool, fetchBenchmarks } from '@riseup-oss/mcp/dist/tools/benchmarks.js';
+import { registerFutureBalancesTool, fetchFutureBankBalancesPrediction } from '@riseup-oss/mcp/dist/tools/future-balances.js';
 import type { RiseupClientConfig } from '@riseup-oss/mcp/dist/client.js';
 import { Sealer, StatelessProvider, parseKey } from './oauth.js';
 
@@ -43,17 +49,23 @@ const json = (data: unknown): ToolResult => ({ content: [{ type: 'text', text: J
 
 const handlers: Record<string, (args: any, cfg: RiseupClientConfig) => Promise<ToolResult>> = {
   get_budget: async ({ date }, cfg) => json(await fetchBudget(date, cfg)),
-  get_transactions: async ({ cashflowMonth, transactionDate, businessName }, cfg) => {
+  get_transactions: async ({ cashflowMonth, transactionDate, businessName, maxTransactions }, cfg) => {
     if (!cashflowMonth && !transactionDate) {
       return { isError: true, content: [{ type: 'text', text: 'Provide cashflowMonth ("YYYY-MM") or transactionDate ("YYYY-MM-DD"); businessName alone is not enough.' }] };
     }
-    return json(await fetchTransactions({ cashflowMonth, transactionDate, businessName }, cfg));
+    return json(await fetchTransactions({ cashflowMonth, transactionDate, businessName, maxTransactions }, cfg));
   },
+  get_mortgages_data: async (_args, cfg) => json(await fetchMortgagesData(cfg)),
+  get_current_bank_balances_data: async (_args, cfg) => json(await fetchCurrentBankBalances(cfg)),
+  get_historical_bank_balances_data: async ({ daysBack }, cfg) => json(await fetchHistoricalBankBalances(daysBack, cfg)),
+  get_future_bank_balances_prediction: async ({ futureDateForPrediction }, cfg) =>
+    json(await fetchFutureBankBalancesPrediction(futureDateForPrediction, cfg)),
+  get_benchmarks_data: async ({ spendAreas }, cfg) => json(await fetchBenchmarks(spendAreas, cfg)),
 };
 
 // Reuse upstream tool names/descriptions/schemas, but swap in per-request handlers.
 function buildServer(cfg: RiseupClientConfig): McpServer {
-  const server = new McpServer({ name: 'riseup-remote', version: '0.1.0' });
+  const server = new McpServer({ name: 'riseup-remote', version: '0.2.0' });
   const shim = {
     registerTool(name: string, toolConfig: unknown, _envHandler: unknown) {
       const h = handlers[name];
@@ -63,6 +75,10 @@ function buildServer(cfg: RiseupClientConfig): McpServer {
   } as unknown as McpServer;
   registerBudgetTool(shim);
   registerTransactionsTool(shim);
+  registerMortgagesTool(shim);
+  registerBalancesTools(shim);
+  registerBenchmarksTool(shim);
+  registerFutureBalancesTool(shim);
   return server;
 }
 

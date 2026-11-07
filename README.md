@@ -16,10 +16,18 @@ The upstream package is stdio-only and reads the token from `RISEUP_PAT`. This s
 ## How it works
 
 - Tool names, descriptions and input schemas come from the upstream package
-  (`registerBudgetTool`, `registerTransactionsTool`) through a small shim; the handlers
-  are swapped for per-request ones that call upstream's `fetchBudget` /
-  `fetchTransactions` with the caller's PAT.
-- Exposed tools: `get_budget`, `get_transactions` (read-only).
+  (its `register*Tool` functions) through a small shim; the handlers are swapped for
+  per-request ones that call upstream's `fetch*` functions with the caller's PAT.
+- Exposed tools (all read-only). Each needs its scope on the PAT; a tool called
+  without it returns a `403` error naming the missing scope.
+
+  | Tool | PAT scope |
+  |---|---|
+  | `get_budget`, `get_transactions` | `budget:read` (תקציב) |
+  | `get_current_bank_balances_data`, `get_historical_bank_balances_data` | `balances:read` (יתרות בנק) |
+  | `get_future_bank_balances_prediction` | `balances:read` + `budget:read` |
+  | `get_mortgages_data` | `mortgages:read` (משכנתא) |
+  | `get_benchmarks_data` | `benchmarks:read` (השוואה ללקוחות דומים) |
 - RiseUp API base is hard-coded to `https://input.riseup.co.il` (no override).
 - Stateless: a fresh `McpServer` + transport per request, `POST` only, 1 MB body limit.
 - Request URLs, headers and tokens are never logged. `GET /healthz` returns `200 ok`.
@@ -60,7 +68,8 @@ builds the Dockerfile straight from this GitHub repo and gives you an `https://`
    `TOKEN_ENCRYPTION_KEY` is generated for you; `PUBLIC_URL` is detected automatically.
 3. Wait for the deploy to go **Live**, then copy the service URL
    (e.g. `https://riseup-connector-xxxx.onrender.com`). Opening `<URL>/healthz` shows `ok`.
-4. Create a RiseUp PAT (scope `budget:read`) at
+4. Create a RiseUp PAT (scope `budget:read`, plus any of the other scopes above for the
+   tools you want) at
    <https://input.riseup.co.il/developer/tokens>.
 5. claude.ai → **Settings → Connectors → Add custom connector**: URL `<URL>/mcp`,
    OAuth fields empty → **Connect** → enter your password and PAT → **Connect**.
@@ -72,6 +81,8 @@ mode only (setting `CONNECT_PASSWORD` turns URL mode off), since platform reques
 record URL paths.
 
 Every 30 days: create a new PAT, then in Claude **Disconnect → Connect** and paste it.
+Scopes can't be added to an existing PAT, so to enable more tools later do the same with a
+new PAT that has the extra scopes.
 
 ## Option B: your own always-on machine (Docker + Cloudflare Tunnel)
 
@@ -89,7 +100,8 @@ cp .env.example .env
 ### 2. Create a RiseUp PAT
 
 Go to <https://input.riseup.co.il/developer/tokens> and create a token with the
-**`budget:read`** scope. Copy it. It is shown only once and looks like `riseup_pat_...`.
+**`budget:read`** scope (add `balances:read`, `mortgages:read`, `benchmarks:read` for the
+other tools; see the table above). Copy it. It is shown only once and looks like `riseup_pat_...`.
 
 ### 3. Hash it for the allowlist
 
